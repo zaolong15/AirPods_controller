@@ -82,8 +82,13 @@ object PodsController {
     @Volatile var link: AapLink? = null
 
     fun setNoise(m: NoiseMode) {
-        link?.send(Aap.setNoiseMode(m))
-        PodsStore.update { it.copy(noise = m) }
+        val active = link
+        if (active?.isConnected != true) {
+            log("未发送降噪指令：AAP 控制通道未连接")
+            return
+        }
+        log("请求切换降噪模式：${m.label}（等待 AirPods 确认）")
+        active.send(Aap.setNoiseMode(m))
     }
 
     fun cycleNoise() {
