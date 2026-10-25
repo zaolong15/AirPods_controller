@@ -264,11 +264,12 @@ private fun EffectsTab() {
         ToggleRow("启用", fx.enabled) { Effects.setEnabled(it) }
         Text("已挂载的播放器音频会话：${fx.sessions}　全局会话：${when (fx.globalAttached) { true -> "可用"; false -> "被系统拒绝"; null -> "未尝试" }}", fontSize = 12.sp)
         Text("只对会广播音频会话的播放器生效（Spotify、YouTube Music、多数本地播放器）。若系统自带的小米音效 / 杜比处于开启状态，可能与之冲突。", fontSize = 12.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Effects.presetNames.take(3).forEach { FilterChip(selected = fx.preset == it, onClick = { Effects.setPreset(it) }, label = { Text(it) }) }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Effects.presetNames.drop(3).forEach { FilterChip(selected = fx.preset == it, onClick = { Effects.setPreset(it) }, label = { Text(it) }) }
+        Effects.presetNames.chunked(3).forEach { rowPresets ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rowPresets.forEach { preset ->
+                    FilterChip(selected = fx.preset == preset, onClick = { Effects.setPreset(preset) }, label = { Text(preset) })
+                }
+            }
         }
         fx.freqsHz.forEachIndexed { i, hz ->
             val v = fx.bands.getOrElse(i) { 0 }
@@ -302,14 +303,25 @@ private fun HeadTab() {
     val shake = remember(ui.logs.size, ui.head) { Gestures.shake }
     val learning = Gestures.learning
 
-    SectionCard("头部追踪（原始数据）") {
-        Text("AirPods 会回传头部朝向与加速度。系统无法直接使用这些数据，这里用来做手势。", fontSize = 12.sp)
+    SectionCard("头部传感器跟踪") {
+        Text("此页显示 AirPods 回传的原始朝向与加速度，并用于手势识别；它不会开启 Android 系统空间音频。", fontSize = 12.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(enabled = ui.connected && !ui.headTracking, onClick = { PodsController.headTracking(true) }) { Text("开始") }
             OutlinedButton(enabled = ui.connected && ui.headTracking, onClick = { PodsController.headTracking(false) }) { Text("停止") }
         }
         val h = ui.head
-        Text(if (h == null) "暂无数据" else "朝向 1/2/3：${h.o1} / ${h.o2} / ${h.o3}\n加速度 水平/垂直：${h.ax} / ${h.ay}")
+        val receivedAt = ui.headUpdatedAtMs?.let {
+            java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(it))
+        }
+        val trackingStatus = when {
+            !ui.connected -> "请先连接 AirPods。"
+            !ui.headTracking -> "跟踪未启动，点击「开始」请求传感器数据。"
+            h == null -> "已发送启动请求，尚未收到数据；若一直如此，请检查耳机型号/固件及 AAP 控制连接。"
+            else -> "已收到传感器数据 · 最近更新 $receivedAt"
+        }
+        Text(trackingStatus, fontSize = 12.sp)
+        Text(if (h == null) "朝向与加速度：等待数据" else
+            "朝向 1/2/3：${h.o1} / ${h.o2} / ${h.o3}\n加速度 水平/垂直：${h.ax} / ${h.ay}")
     }
 
     SectionCard("点头 / 摇头手势（实验）") {

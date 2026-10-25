@@ -72,7 +72,10 @@ class PodsService : Service() {
         link.onClosed = { reason ->
             PodsStore.log("连接断开: $reason")
             restoreVolume()
-            PodsStore.update { it.copy(connected = false, connecting = false, status = "已断开：$reason", headTracking = false) }
+            PodsStore.update {
+                it.copy(connected = false, connecting = false, status = "已断开：$reason", headTracking = false,
+                    head = null, headUpdatedAtMs = null)
+            }
             updateScan()
             refreshNotif()
         }
@@ -86,7 +89,10 @@ class PodsService : Service() {
             ACTION_CONNECT -> connect(intent.getStringExtra(EXTRA_ADDR), attempts = 1)
             ACTION_DISCONNECT -> {
                 link.close()
-                PodsStore.update { it.copy(connected = false, connecting = false, status = "已断开") }
+                PodsStore.update {
+                    it.copy(connected = false, connecting = false, status = "已断开", headTracking = false,
+                        head = null, headUpdatedAtMs = null)
+                }
                 if (!PodsStore.state.value.standby) stopSelf() else { updateScan(); refreshNotif() }
             }
             ACTION_STANDBY -> enterStandby()
@@ -116,7 +122,10 @@ class PodsService : Service() {
                 BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                     PodsStore.log("AirPods 已与手机断开")
                     link.close()
-                    PodsStore.update { it.copy(connected = false, connecting = false, status = "待命：AirPods 连上手机后自动接管", headTracking = false) }
+                    PodsStore.update {
+                        it.copy(connected = false, connecting = false, status = "待命：AirPods 连上手机后自动接管",
+                            headTracking = false, head = null, headUpdatedAtMs = null)
+                    }
                     updateScan(); refreshNotif()
                 }
             }
@@ -247,7 +256,10 @@ class PodsService : Service() {
     // ---------- 头部手势 / 来电 ----------
     private fun onHead(s: HeadSample) {
         val now = System.currentTimeMillis()
-        if (now - lastHeadMs > 60) { lastHeadMs = now; PodsStore.update { it.copy(head = s) } }
+        if (now - lastHeadMs > 60) {
+            lastHeadMs = now
+            PodsStore.update { it.copy(head = s, headUpdatedAtMs = now) }
+        }
         val g = Gestures.feed(s, now) ?: return
         PodsStore.log("识别到手势: ${if (g == "nod") "点头" else "摇头"}")
         if (!ringing || !PodsStore.state.value.gestureCalls) return

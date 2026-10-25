@@ -41,10 +41,19 @@ object Effects {
 
     private val PRESETS = linkedMapOf(
         "平直" to listOf(0, 0, 0, 0, 0),
-        "低音增强" to listOf(6, 4, 0, 0, 1),
-        "人声清晰" to listOf(-2, 0, 4, 3, -1),
-        "明亮" to listOf(-1, 0, 1, 4, 6),
-        "舒缓" to listOf(3, 1, -1, -2, -3),
+        "低音增强" to listOf(5, 3, 0, 0, 1),
+        "低音人声" to listOf(4, 2, 2, 3, 0),
+        "人声清晰" to listOf(-2, 0, 3, 4, -1),
+        "播客" to listOf(-1, 1, 4, 3, 0),
+        "明亮" to listOf(-1, 0, 1, 3, 4),
+        "舒缓" to listOf(2, 1, 0, -1, -2),
+        "流行" to listOf(3, 1, 2, 2, 1),
+        "摇滚" to listOf(4, 2, -1, 2, 4),
+        "电子" to listOf(4, 2, 1, 2, 4),
+        "古典" to listOf(2, 1, 0, 1, 3),
+        "爵士" to listOf(3, 1, -1, 2, 3),
+        "游戏" to listOf(2, 0, 2, 1, 3),
+        "夜间" to listOf(-2, -1, 2, 1, -2),
     )
     val presetNames: List<String> get() = PRESETS.keys.toList()
     private val REF = listOf(60.0, 230.0, 910.0, 3600.0, 14000.0)
