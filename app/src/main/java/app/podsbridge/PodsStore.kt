@@ -18,6 +18,7 @@ data class PodsUi(
     val adaptiveLevel: Int = 50,
     val meta: Meta? = null,
     val head: HeadSample? = null,
+    val headUpdatedAtMs: Long? = null,
     val headTracking: Boolean = false,
     val logs: List<String> = emptyList(),
     val ble: BleReading? = null,
@@ -113,7 +114,15 @@ object PodsController {
     }
 
     fun headTracking(on: Boolean) {
-        link?.send(if (on) Aap.START_HEAD_TRACKING else Aap.STOP_HEAD_TRACKING)
-        PodsStore.update { it.copy(headTracking = on) }
+        val active = link
+        if (active?.isConnected != true) {
+            PodsStore.log("未发送头部跟踪指令：AAP 控制通道未连接")
+            return
+        }
+        active.send(if (on) Aap.START_HEAD_TRACKING else Aap.STOP_HEAD_TRACKING)
+        PodsStore.log(if (on) "已请求头部数据流，等待 AirPods 传感器回包" else "已请求停止头部数据流")
+        PodsStore.update {
+            it.copy(headTracking = on, head = if (on) null else it.head, headUpdatedAtMs = if (on) null else it.headUpdatedAtMs)
+        }
     }
 }

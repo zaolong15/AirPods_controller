@@ -76,8 +76,9 @@ object Aap {
             0x0009 -> parseControl(b)
             0x004B -> if (b.size >= 10) AapEvent.CaLevel(u(b[9])) else null
             0x001D -> parseMeta(b)
-            0x0017 -> if (b.size >= 55)
-                AapEvent.Head(HeadSample(s16(b, 43), s16(b, 45), s16(b, 47), s16(b, 51), s16(b, 53))) else null
+            0x0017 -> if (b.size >= 70 && u(b[8]) == 0x10)
+                AapEvent.Head(HeadSample(s16(b, 43), s16(b, 45), s16(b, 47), s16(b, 51), s16(b, 53)))
+            else AapEvent.Other(op, hex(b.copyOf(minOf(b.size, 32))))
             else -> AapEvent.Other(op, hex(b.copyOf(minOf(b.size, 32))))
         }
     }
