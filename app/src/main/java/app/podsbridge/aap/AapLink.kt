@@ -16,6 +16,7 @@ class AapLink(private val log: (String) -> Unit) {
     @Volatile private var socket: BluetoothSocket? = null
     @Volatile private var out: OutputStream? = null
     @Volatile private var closing = false
+    @Volatile private var generation = 0L
     private val sender = Executors.newSingleThreadExecutor()
     private val timer = Executors.newSingleThreadScheduledExecutor()
 
@@ -29,14 +30,17 @@ class AapLink(private val log: (String) -> Unit) {
             .onFailure { log("HiddenApiBypass 失败: ${it.message}") }
     }
 
-    private fun hidden(d: BluetoothDevice, name: String): BluetoothSocket {
-        val m = BluetoothDevice::class.java.getDeclaredMethod(name, Int::class.javaPrimitiveType)
-        m.isAccessible = true
-        return m.invoke(d, Aap.PSM) as BluetoothSocket
-    }
-
     /** 直接用 BluetoothSocket 的隐藏构造器建立经典蓝牙 L2CAP（type=3）连接。 */
-    private fun ctor(d: BluetoothDevice, secure: Boolean): BluetoothSocket {
+    private fun ctor(d: BluetoothDevice, secure: Boolean, mitm: Boolean = false): BluetoothSocket {
+        if (mitm) {
+            val modern = BluetoothSocket::class.java.getDeclaredConstructor(
+                BluetoothDevice::class.java, Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, ParcelUuid::class.java,
+                Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType
+            )
+            modern.isAccessible = true
+            return modern.newInstance(d, 3, secure, secure, Aap.PSM, null, true, false) as BluetoothSocket
+        }
         val c = BluetoothSocket::class.java.getDeclaredConstructor(
             BluetoothDevice::class.java, Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
             Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, ParcelUuid::class.java
@@ -49,14 +53,12 @@ class AapLink(private val log: (String) -> Unit) {
     fun connect(device: BluetoothDevice): Boolean {
         close()
         closing = false
+        val thisGeneration = generation
         unlockHiddenApi()
         val strategies = listOf<Pair<String, () -> BluetoothSocket>>(
-            "隐藏 API createL2capSocket（经典蓝牙）" to { hidden(device, "createL2capSocket") },
+            "隐藏构造器 L2CAP 加密（Android 16 MITM）" to { ctor(device, true, mitm = true) },
             "隐藏构造器 L2CAP 加密" to { ctor(device, true) },
             "隐藏构造器 L2CAP 不加密" to { ctor(device, false) },
-            "隐藏 API createInsecureL2capSocket" to { hidden(device, "createInsecureL2capSocket") },
-            "公开 API createL2capChannel（低功耗通道）" to { device.createL2capChannel(Aap.PSM) },
-            "公开 API createInsecureL2capChannel（低功耗通道）" to { device.createInsecureL2capChannel(Aap.PSM) },
         )
         for ((name, make) in strategies) {
             var current: BluetoothSocket? = null
@@ -73,8 +75,8 @@ class AapLink(private val log: (String) -> Unit) {
                 watchdog.cancel(false)
                 socket = sock
                 out = sock.outputStream
-                log("✓ $name 连接成功")
-                startReader(sock)
+                log("✓ $name 连接成功（经典蓝牙 L2CAP PSM 0x%04X）".format(Aap.PSM))
+                startReader(sock, thisGeneration)
                 handshake()
                 return true
             } catch (t: Throwable) {
@@ -96,7 +98,9 @@ class AapLink(private val log: (String) -> Unit) {
     }
 
     fun send(b: ByteArray) {
+        val thisGeneration = generation
         sender.execute {
+            if (thisGeneration != generation || closing) return@execute
             try {
                 out?.write(b)
                 out?.flush()
@@ -106,7 +110,7 @@ class AapLink(private val log: (String) -> Unit) {
         }
     }
 
-    private fun startReader(s: BluetoothSocket) {
+    private fun startReader(s: BluetoothSocket, thisGeneration: Long) {
         Thread({
             val buf = ByteArray(4096)
             try {
@@ -117,18 +121,26 @@ class AapLink(private val log: (String) -> Unit) {
                     if (n == 0) continue
                     Aap.parse(buf.copyOf(n))?.let(onEvent)
                 }
-                if (!closing) onClosed("对端关闭了连接")
+                if (!closing && generation == thisGeneration) onClosed("对端关闭了连接")
             } catch (t: Throwable) {
-                if (!closing) onClosed("读取中断: ${t.message}")
+                if (!closing && generation == thisGeneration) onClosed("读取中断: ${t.message}")
             }
         }, "aap-reader").start()
     }
 
     fun close() {
         closing = true
+        generation++
         runCatching { socket?.close() }
         socket = null
         out = null
+    }
+
+    fun diagnostics(device: BluetoothDevice): String = buildString {
+        appendLine("设备：${runCatching { device.name }.getOrNull() ?: "未知"} / ${device.address}")
+        appendLine("已配对：${runCatching { device.bondState == BluetoothDevice.BOND_BONDED }.getOrDefault(false)}")
+        appendLine("传输：经典蓝牙 BR/EDR L2CAP，PSM 0x%04X".format(Aap.PSM))
+        append(probe())
     }
 
     /** 列出系统里与 L2CAP 相关的隐藏接口签名，连接失败时把这段日志发回来就能针对性调整。 */

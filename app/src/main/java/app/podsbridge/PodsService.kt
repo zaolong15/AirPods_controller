@@ -173,7 +173,7 @@ class PodsService : Service() {
                 PodsStore.log("第 $n/$attempts 次连接失败")
             }
             if (ok) PodsStore.rememberDevice(name, addr)
-            else PodsStore.log("—— 接口探测 ——\n" + link.probe())
+            else PodsStore.log("—— 设备与接口诊断 ——\n" + link.diagnostics(dev))
             PodsStore.update {
                 it.copy(
                     connecting = false, connected = ok,
@@ -195,7 +195,10 @@ class PodsService : Service() {
     private fun handle(e: AapEvent) {
         when (e) {
             is AapEvent.Batt -> { PodsStore.update { it.copy(battery = it.battery + e.parts) }; refreshNotif() }
-            is AapEvent.Noise -> { PodsStore.update { it.copy(noise = e.mode ?: it.noise) }; refreshNotif() }
+            is AapEvent.Noise -> {
+                e.mode?.let { PodsStore.log("AirPods 确认噪声模式：${it.label}") }
+                PodsStore.update { it.copy(noise = e.mode ?: it.noise) }; refreshNotif()
+            }
             is AapEvent.EarDet -> { PodsStore.update { it.copy(ear = e.primary to e.secondary) }; onEar(e) }
             is AapEvent.CaLevel -> onConversation(e.level)
             is AapEvent.CaEnabled -> PodsStore.update { it.copy(convAware = e.on) }
