@@ -3,10 +3,12 @@ package app.podsbridge.aap
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.os.ParcelUuid
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.OutputStream
 import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** 通过 L2CAP PSM 0x1001 连接 AirPods。依次尝试多种建立 socket 的办法，并把每一步结果写进日志，便于在真机上诊断。 */
 @SuppressLint("MissingPermission")
@@ -15,6 +17,7 @@ class AapLink(private val log: (String) -> Unit) {
     @Volatile private var out: OutputStream? = null
     @Volatile private var closing = false
     private val sender = Executors.newSingleThreadExecutor()
+    private val timer = Executors.newSingleThreadScheduledExecutor()
 
     var onEvent: (AapEvent) -> Unit = {}
     var onClosed: (String) -> Unit = {}
@@ -32,33 +35,53 @@ class AapLink(private val log: (String) -> Unit) {
         return m.invoke(d, Aap.PSM) as BluetoothSocket
     }
 
-    /** 阻塞调用，请在后台线程执行。 */
+    /** 直接用 BluetoothSocket 的隐藏构造器建立经典蓝牙 L2CAP（type=3）连接。 */
+    private fun ctor(d: BluetoothDevice, secure: Boolean): BluetoothSocket {
+        val c = BluetoothSocket::class.java.getDeclaredConstructor(
+            BluetoothDevice::class.java, Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+            Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, ParcelUuid::class.java
+        )
+        c.isAccessible = true
+        return c.newInstance(d, 3, secure, secure, Aap.PSM, null) as BluetoothSocket
+    }
+
+    /** 阻塞调用，请在后台线程执行。每种办法最多等 8 秒。 */
     fun connect(device: BluetoothDevice): Boolean {
         close()
         closing = false
         unlockHiddenApi()
         val strategies = listOf<Pair<String, () -> BluetoothSocket>>(
-            "公开 API createL2capChannel" to { device.createL2capChannel(Aap.PSM) },
-            "公开 API createInsecureL2capChannel" to { device.createInsecureL2capChannel(Aap.PSM) },
-            "隐藏 API createL2capSocket" to { hidden(device, "createL2capSocket") },
+            "隐藏 API createL2capSocket（经典蓝牙）" to { hidden(device, "createL2capSocket") },
+            "隐藏构造器 L2CAP 加密" to { ctor(device, true) },
+            "隐藏构造器 L2CAP 不加密" to { ctor(device, false) },
             "隐藏 API createInsecureL2capSocket" to { hidden(device, "createInsecureL2capSocket") },
+            "公开 API createL2capChannel（低功耗通道）" to { device.createL2capChannel(Aap.PSM) },
+            "公开 API createInsecureL2capChannel（低功耗通道）" to { device.createInsecureL2capChannel(Aap.PSM) },
         )
         for ((name, make) in strategies) {
-            var s: BluetoothSocket? = null
+            var current: BluetoothSocket? = null
+            val t0 = System.currentTimeMillis()
+            val watchdog = timer.schedule(Runnable {
+                log("  超过 8 秒无响应，中止本次尝试")
+                runCatching { current?.close() }
+            }, 8, TimeUnit.SECONDS)
             try {
                 log("尝试: $name")
-                s = make()
-                s.connect()
-                socket = s
-                out = s.outputStream
+                val sock = make()
+                current = sock
+                sock.connect()
+                watchdog.cancel(false)
+                socket = sock
+                out = sock.outputStream
                 log("✓ $name 连接成功")
-                startReader(s)
+                startReader(sock)
                 handshake()
                 return true
             } catch (t: Throwable) {
+                watchdog.cancel(false)
                 val c = (t as? InvocationTargetException)?.targetException ?: t
-                log("✗ $name: ${c.javaClass.simpleName}: ${c.message}")
-                runCatching { s?.close() }
+                log("✗ $name（${System.currentTimeMillis() - t0}ms）: ${c.javaClass.simpleName}: ${c.message}")
+                runCatching { current?.close() }
             }
         }
         return false
